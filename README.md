@@ -19,6 +19,7 @@ Exemplo:
 ```env
 FRONTEND_URL=https://crm.seudominio.com
 BACKEND_URL=https://api-crm.seudominio.com
+WS_URL=wss://api-crm.seudominio.com
 EVOGO_PUBLIC_URL=https://whatsapp.seudominio.com
 CORS_ORIGINS=https://crm.seudominio.com,https://api-crm.seudominio.com,https://whatsapp.seudominio.com
 ```
@@ -30,6 +31,47 @@ crm.seudominio.com
 api-crm.seudominio.com
 whatsapp.seudominio.com
 ```
+
+Se voce usar `whatsapp.meudominio.com`, ele deve apontar para o servico `evolution-go`, porta interna `4000`.
+
+Resumo dos tres:
+
+```text
+crm.meudominio.com       -> evo-frontend:80
+api-crm.meudominio.com   -> evo-gateway:3030
+whatsapp.meudominio.com  -> evolution-go:4000
+```
+
+`WS_URL` deve usar o mesmo dominio do `BACKEND_URL`, mas com protocolo `wss://`.
+
+Exemplo:
+
+```env
+BACKEND_URL=https://api-crm.meudominio.com
+WS_URL=wss://api-crm.meudominio.com
+```
+
+Nao coloque `/cable` no final. O frontend ja adiciona esse caminho.
+
+## Webhook do Evolution GO
+
+`EVOGO_WEBHOOK_URL` e a URL que o Evolution GO chama quando recebe eventos do WhatsApp.
+
+Nao deixe como padrao apenas a URL do EvoCRM, porque normalmente webhook precisa de um caminho especifico, nao so o dominio.
+
+Use somente quando voce souber o endpoint receptor do EvoCRM. Exemplo de formato:
+
+```env
+EVOGO_WEBHOOK_URL=https://api-crm.seudominio.com/caminho-do-webhook
+```
+
+Se o endpoint correto ainda nao estiver confirmado, deixe vazio:
+
+```env
+EVOGO_WEBHOOK_URL=
+```
+
+Depois da primeira subida, se o EvoCRM tiver uma tela de integracao/canal WhatsApp que gera ou informa a URL de webhook, use essa URL completa aqui.
 
 ## Instalacao em VPS
 
@@ -123,3 +165,24 @@ Nao publique `.env` real. Publique apenas `env.example`.
 Evite usar `latest` em producao se houver tags estaveis disponiveis. Troque `EVOCRM_TAG` e `EVOGO_TAG` para versoes fixas quando possivel.
 
 O primeiro deploy pode demorar, porque os servicos `*_init` preparam banco, seeds e migracoes.
+
+## Troubleshooting
+
+### `relation "installation_configs" does not exist`
+
+Esse erro indica que o banco do EvoCRM foi iniciado sem todas as tabelas.
+
+Primeiro tente recriar os jobs de inicializacao:
+
+```bash
+docker compose up -d --force-recreate evo_auth_init evo_crm_init evo-crm evo-crm-sidekiq
+```
+
+Se for uma instalacao nova e sem dados importantes, o caminho mais limpo e recriar os volumes:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+Nao use `down -v` em instalacao com dados reais, porque isso apaga banco, Redis e dados persistentes.

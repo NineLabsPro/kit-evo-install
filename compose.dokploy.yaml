@@ -72,7 +72,13 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: sh -c "(bundle exec rails db:prepare || echo 'Auth db:prepare non-fatal error') && (bundle exec rails db:seed || echo 'Auth seed skipped')"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        bundle exec rails db:prepare
+        bundle exec rails db:seed
 
   evo_crm_init:
     image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
@@ -108,11 +114,9 @@ services:
       - sh
       - -c
       - |
-        set +e
-        bundle exec rails db:schema:load || echo "CRM db:schema:load non-fatal error"
-        bundle exec rails runner "conn = ActiveRecord::Base.connection; pending = conn.migration_context.open.pending_migrations; pending.each { |m| conn.execute(\"INSERT INTO schema_migrations (version) VALUES ('#{m.version}') ON CONFLICT (version) DO NOTHING\") };" || echo "CRM normalize migrations non-fatal error"
-        bundle exec rails db:seed || echo "CRM seed skipped"
-        exit 0
+        set -e
+        bundle exec rails db:prepare
+        bundle exec rails db:seed
 
   evo_processor_init:
     image: evoapicloud/evo-ai-processor-community:${EVOCRM_TAG:-latest}
@@ -402,6 +406,7 @@ services:
       VITE_AUTH_API_URL: ${BACKEND_URL}
       VITE_EVOAI_API_URL: ${BACKEND_URL}
       VITE_AGENT_PROCESSOR_URL: ${BACKEND_URL}
+      VITE_WS_URL: ${WS_URL}
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:
