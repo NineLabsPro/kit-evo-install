@@ -80,7 +80,7 @@ services:
         echo "Preparing Evo Auth database..."
         bundle exec rails db:prepare
         echo "Seeding Evo Auth database..."
-        bundle exec rails db:seed || echo "Evo Auth seed skipped or already applied."
+        bundle exec rails db:seed
         echo "Evo Auth database is ready."
 
   evo_crm_init:
@@ -121,7 +121,7 @@ services:
         echo "Preparing EvoCRM database..."
         bundle exec rails db:prepare
         echo "Seeding EvoCRM database..."
-        bundle exec rails db:seed || echo "EvoCRM seed skipped or already applied."
+        bundle exec rails db:seed
         echo "EvoCRM database is ready."
 
   evo_processor_init:

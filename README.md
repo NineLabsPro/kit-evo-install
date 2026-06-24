@@ -168,6 +168,29 @@ O primeiro deploy pode demorar, porque os servicos `*_init` preparam banco, seed
 
 ## Troubleshooting
 
+### `GET /api/v1/admin/app_configs/...` ou `/api/v1/dashboard_apps` retorna 500
+
+Esse erro normalmente indica que o EvoCRM subiu, mas as migracoes ou seeds do
+servico `evo_crm_init` nao prepararam todos os registros de configuracao do
+dashboard.
+
+Primeiro rode novamente o job de inicializacao do CRM e recrie os processos que
+dependem dele:
+
+```bash
+docker compose up -d --force-recreate evo_crm_init evo-crm evo-crm-sidekiq
+```
+
+Depois confira o log do job:
+
+```bash
+docker compose logs --tail=200 evo_crm_init
+```
+
+Se aparecer erro de banco, migration ou seed, corrija esse erro antes de
+reiniciar o frontend. Nao use `docker compose down -v` em producao com dados
+reais, porque isso apaga os volumes.
+
 ### `relation "installation_configs" does not exist`
 
 Esse erro indica que o banco do EvoCRM foi iniciado sem todas as tabelas.
