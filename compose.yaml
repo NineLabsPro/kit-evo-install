@@ -1,0 +1,458 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USER: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: ["sh", "-c", "redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres_init:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        create_db() {
+          DB_NAME="$1"
+          if ! psql -h postgres -U "${POSTGRES_USERNAME:-postgres}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$$DB_NAME'" | grep -q 1; then
+            createdb -h postgres -U "${POSTGRES_USERNAME:-postgres}" "$$DB_NAME"
+          fi
+        }
+        create_db "${POSTGRES_DATABASE:-evo_community}"
+        create_db "${EVOGO_AUTH_DATABASE:-evogo_auth}"
+        create_db "${EVOGO_USERS_DATABASE:-evogo_users}"
+
+  evo_auth_init:
+    image: evoapicloud/evo-auth-service-community:${EVOCRM_TAG:-latest}
+    restart: "no"
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DOORKEEPER_JWT_SECRET_KEY: ${DOORKEEPER_JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: sh -c "(bundle exec rails db:prepare || echo 'Auth db:prepare non-fatal error') && (bundle exec rails db:seed || echo 'Auth seed skipped')"
+
+  evo_crm_init:
+    image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
+    restart: "no"
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
+      BOT_RUNTIME_URL: http://evo-bot-runtime:8080
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_auth_init:
+        condition: service_completed_successfully
+      evo-auth:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        set +e
+        bundle exec rails db:schema:load || echo "CRM db:schema:load non-fatal error"
+        bundle exec rails runner "conn = ActiveRecord::Base.connection; pending = conn.migration_context.open.pending_migrations; pending.each { |m| conn.execute(\"INSERT INTO schema_migrations (version) VALUES ('#{m.version}') ON CONFLICT (version) DO NOTHING\") };" || echo "CRM normalize migrations non-fatal error"
+        bundle exec rails db:seed || echo "CRM seed skipped"
+        exit 0
+
+  evo_processor_init:
+    image: evoapicloud/evo-ai-processor-community:${EVOCRM_TAG:-latest}
+    restart: "no"
+    environment:
+      POSTGRES_CONNECTION_STRING: postgresql://${POSTGRES_USERNAME:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE:-evo_community}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_SSL: "false"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AI_CRM_URL: http://evo-crm:3000
+      CORE_SERVICE_URL: http://evo-core:5555/api/v1
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo-core:
+        condition: service_started
+    command:
+      - sh
+      - -c
+      - |
+        python - <<'PY'
+        import asyncio
+        import os
+        import asyncpg
+
+        dsn = os.environ["POSTGRES_CONNECTION_STRING"]
+
+        async def wait_core_table():
+          for i in range(90):
+            try:
+              conn = await asyncpg.connect(dsn)
+              exists = await conn.fetchval("SELECT to_regclass('public.evo_core_agents') IS NOT NULL;")
+              await conn.close()
+              if exists:
+                print("evo_core_agents found; continuing processor migrations")
+                return
+              print(f"waiting evo_core_agents... attempt {i + 1}/90")
+            except Exception as e:
+              print(f"waiting postgres/core readiness... {e}")
+            await asyncio.sleep(2)
+          raise SystemExit("Timeout waiting for evo_core_agents table")
+
+        asyncio.run(wait_core_table())
+        PY
+        alembic upgrade head 2>&1 || echo "Alembic migration had errors, continuing..."
+        python -m scripts.run_seeders
+
+  evo-gateway:
+    image: evoapicloud/evo-crm-gateway:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    ports:
+      - "${GATEWAY_PORT:-3030}:3030"
+    depends_on:
+      evo-auth:
+        condition: service_started
+      evo-crm:
+        condition: service_started
+      evo-core:
+        condition: service_started
+      evo-processor:
+        condition: service_started
+      evo-bot-runtime:
+        condition: service_started
+
+  evo-auth:
+    image: evoapicloud/evo-auth-service-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DOORKEEPER_JWT_SECRET_KEY: ${DOORKEEPER_JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_auth_init:
+        condition: service_completed_successfully
+    command: sh -c "bundle exec rails s -p 3001 -b 0.0.0.0"
+    networks:
+      default:
+        aliases:
+          - evo_auth
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3001/health || curl -fsS http://localhost:3001/up || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+
+  evo-auth-sidekiq:
+    image: evoapicloud/evo-auth-service-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DOORKEEPER_JWT_SECRET_KEY: ${DOORKEEPER_JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_auth_init:
+        condition: service_completed_successfully
+    command: sh -c "bundle exec sidekiq"
+
+  evo-crm:
+    image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
+      BOT_RUNTIME_URL: http://evo-bot-runtime:8080
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_auth_init:
+        condition: service_completed_successfully
+      evo_crm_init:
+        condition: service_completed_successfully
+    command: sh -c "bundle exec rails s -p 3000 -b 0.0.0.0"
+    networks:
+      default:
+        aliases:
+          - evo_crm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  evo-crm-sidekiq:
+    image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-evo_community}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
+      BOT_RUNTIME_URL: http://evo-bot-runtime:8080
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_auth_init:
+        condition: service_completed_successfully
+      evo_crm_init:
+        condition: service_completed_successfully
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+
+  evo-core:
+    image: evoapicloud/evo-ai-core-service-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USERNAME:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DATABASE:-evo_community}
+      DB_SSLMODE: disable
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOLUTION_BASE_URL: http://evo-crm:3000
+      EVO_AUTH_BASE_URL: http://evo-auth:3001
+      AI_PROCESSOR_URL: http://evo-processor:8000
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      evo_auth_init:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - evo_core
+
+  evo-processor:
+    image: evoapicloud/evo-ai-processor-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_CONNECTION_STRING: postgresql://${POSTGRES_USERNAME:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DATABASE:-evo_community}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_SSL: "false"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
+      EVO_AI_CRM_URL: http://evo-crm:3000
+      CORE_SERVICE_URL: http://evo-core:5555/api/v1
+    volumes:
+      - processor_logs:/app/logs
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      evo_processor_init:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - evo_processor
+
+  evo-bot-runtime:
+    image: evoapicloud/evo-bot-runtime:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      AI_PROCESSOR_URL: http://evo-processor:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      evo_processor_init:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - evo_bot_runtime
+
+  evo-frontend:
+    image: evoapicloud/evo-ai-frontend-community:${EVOCRM_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      VITE_APP_ENV: production
+      VITE_API_URL: ${BACKEND_URL}
+      VITE_AUTH_API_URL: ${BACKEND_URL}
+      VITE_EVOAI_API_URL: ${BACKEND_URL}
+      VITE_AGENT_PROCESSOR_URL: ${BACKEND_URL}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      evo-gateway:
+        condition: service_started
+
+  evolution-go:
+    image: evoapicloud/evolution-go:${EVOGO_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: ${EVOGO_PORT:-4000}
+      CLIENT_NAME: ${EVOGO_CLIENT_NAME:-evolution}
+      GLOBAL_API_KEY: ${EVOGO_GLOBAL_API_KEY}
+      POSTGRES_AUTH_DB: postgresql://${POSTGRES_USERNAME:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${EVOGO_AUTH_DATABASE:-evogo_auth}?sslmode=disable
+      POSTGRES_USERS_DB: postgresql://${POSTGRES_USERNAME:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${EVOGO_USERS_DATABASE:-evogo_users}?sslmode=disable
+      DATABASE_SAVE_MESSAGES: ${EVOGO_DATABASE_SAVE_MESSAGES:-false}
+      WADEBUG: ${EVOGO_WADEBUG:-INFO}
+      LOGTYPE: ${EVOGO_LOGTYPE:-console}
+      LOG_DIRECTORY: /app/logs
+      LOG_MAX_SIZE: ${EVOGO_LOG_MAX_SIZE:-100}
+      LOG_MAX_BACKUPS: ${EVOGO_LOG_MAX_BACKUPS:-5}
+      LOG_MAX_AGE: ${EVOGO_LOG_MAX_AGE:-30}
+      LOG_COMPRESS: ${EVOGO_LOG_COMPRESS:-true}
+      CONNECT_ON_STARTUP: ${EVOGO_CONNECT_ON_STARTUP:-false}
+      WEBHOOKFILES: ${EVOGO_WEBHOOKFILES:-true}
+      OS_NAME: ${EVOGO_OS_NAME:-Linux}
+      WEBHOOK_URL: ${EVOGO_WEBHOOK_URL:-}
+      AMQP_URL: ${EVOGO_AMQP_URL:-}
+      AMQP_GLOBAL_ENABLED: ${EVOGO_AMQP_GLOBAL_ENABLED:-false}
+      NATS_URL: ${EVOGO_NATS_URL:-}
+      NATS_GLOBAL_ENABLED: ${EVOGO_NATS_GLOBAL_ENABLED:-false}
+      MINIO_ENABLED: ${EVOGO_MINIO_ENABLED:-false}
+      PROXY_HOST: ${EVOGO_PROXY_HOST:-}
+      PROXY_PORT: ${EVOGO_PROXY_PORT:-}
+      PROXY_USERNAME: ${EVOGO_PROXY_USERNAME:-}
+      PROXY_PASSWORD: ${EVOGO_PROXY_PASSWORD:-}
+      EVENT_IGNORE_GROUP: ${EVOGO_EVENT_IGNORE_GROUP:-false}
+      EVENT_IGNORE_STATUS: ${EVOGO_EVENT_IGNORE_STATUS:-true}
+      QRCODE_MAX_COUNT: ${EVOGO_QRCODE_MAX_COUNT:-5}
+    ports:
+      - "${EVOGO_PORT:-4000}:${EVOGO_PORT:-4000}"
+    volumes:
+      - evogo_data:/app/dbdata
+      - evogo_logs:/app/logs
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
+  processor_logs:
+  evogo_data:
+  evogo_logs:

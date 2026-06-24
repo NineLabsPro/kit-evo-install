@@ -1,0 +1,7 @@
+# Dokploy usa as mesmas variaveis do env.example.
+# Mantenha este arquivo apenas como compatibilidade com instalacoes antigas.
+#
+# Para uma nova instalacao:
+# 1. Copie o conteudo de env.example.
+# 2. Cole na aba Environment do Dokploy.
+# 3. Altere FRONTEND_URL, BACKEND_URL, EVOGO_PUBLIC_URL, CORS_ORIGINS e todos os segredos.
