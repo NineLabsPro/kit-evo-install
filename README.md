@@ -168,6 +168,63 @@ O primeiro deploy pode demorar, porque os servicos `*_init` preparam banco, seed
 
 ## Troubleshooting
 
+### Area de agentes retorna erro de CORS ou `Network Error`
+
+Se o frontend estiver em um dominio diferente do exemplo, use o dominio exato
+em `FRONTEND_URL` e `CORS_ORIGINS`.
+
+Exemplo para painel em `app-crm.ninelabs.com.br`:
+
+```env
+FRONTEND_URL=https://app-crm.ninelabs.com.br
+BACKEND_URL=https://api-crm.ninelabs.com.br
+WS_URL=wss://api-crm.ninelabs.com.br
+CORS_ORIGINS=https://app-crm.ninelabs.com.br,https://api-crm.ninelabs.com.br,https://whatsapp.ninelabs.com.br
+```
+
+Depois de alterar as variaveis no painel de deploy, recrie os servicos que
+leem essa configuracao:
+
+```bash
+docker compose up -d --force-recreate evo-gateway evo-auth evo-crm evo-crm-sidekiq
+```
+
+Se o navegador mostrar CORS, mas o preflight retornar `502`, o problema nao e
+so CORS. Confira se o dominio da API esta apontando para `evo-gateway` na porta
+interna `3030`, e nao direto para `evo-crm` na porta `3000`.
+
+Para a area de agentes, confira tambem se os servicos abaixo estao saudaveis,
+porque `/api/v1/agents` depende do gateway e dos servicos de agentes:
+
+```bash
+docker compose ps evo-gateway evo-core evo-processor evo-bot-runtime
+docker compose logs --tail=200 evo-gateway evo-core evo-processor evo-bot-runtime
+```
+
+Teste esperado:
+
+```bash
+curl -i -X OPTIONS 'https://api-crm.ninelabs.com.br/api/v1/agents?page=1&pageSize=24' \
+  -H 'Origin: https://app-crm.ninelabs.com.br' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: authorization,content-type'
+```
+
+A resposta deve ter status 2xx/3xx e incluir
+`Access-Control-Allow-Origin: https://app-crm.ninelabs.com.br`.
+
+### Cloudflare beacon bloqueado pela CSP
+
+Se aparecer erro para `https://static.cloudflareinsights.com/beacon.min.js`, ha
+duas opcoes:
+
+- desativar Cloudflare Web Analytics para esse dominio;
+- ou incluir `https://static.cloudflareinsights.com` na diretiva `script-src`
+  da CSP configurada no frontend/proxy.
+
+Esse erro do beacon nao impede o carregamento dos agentes. Ele so indica que a
+CSP atual bloqueou o script de analytics da Cloudflare.
+
 ### `GET /api/v1/admin/app_configs/...` ou `/api/v1/dashboard_apps` retorna 500
 
 Esse erro normalmente indica que o EvoCRM subiu, mas as migracoes ou seeds do
