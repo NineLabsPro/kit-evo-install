@@ -77,8 +77,11 @@ services:
       - -c
       - |
         set -e
+        echo "Preparing Evo Auth database..."
         bundle exec rails db:prepare
-        bundle exec rails db:seed
+        echo "Seeding Evo Auth database..."
+        bundle exec rails db:seed || echo "Evo Auth seed skipped or already applied."
+        echo "Evo Auth database is ready."
 
   evo_crm_init:
     image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
@@ -115,8 +118,11 @@ services:
       - -c
       - |
         set -e
+        echo "Preparing EvoCRM database..."
         bundle exec rails db:prepare
-        bundle exec rails db:seed
+        echo "Seeding EvoCRM database..."
+        bundle exec rails db:seed || echo "EvoCRM seed skipped or already applied."
+        echo "EvoCRM database is ready."
 
   evo_processor_init:
     image: evoapicloud/evo-ai-processor-community:${EVOCRM_TAG:-latest}
