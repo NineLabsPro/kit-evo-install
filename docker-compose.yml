@@ -258,6 +258,8 @@ services:
       evo_auth_init:
         condition: service_completed_successfully
     command: sh -c "bundle exec sidekiq"
+    healthcheck:
+      disable: true
 
   evo-crm:
     image: evoapicloud/evo-ai-crm-community:${EVOCRM_TAG:-latest}
@@ -332,6 +334,8 @@ services:
       evo_crm_init:
         condition: service_completed_successfully
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    healthcheck:
+      disable: true
 
   evo-core:
     image: evoapicloud/evo-ai-core-service-community:${EVOCRM_TAG:-latest}
@@ -393,6 +397,7 @@ services:
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       AI_PROCESSOR_URL: http://evo-processor:8000
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
     depends_on:
       redis:
         condition: service_healthy
@@ -413,6 +418,18 @@ services:
       VITE_EVOAI_API_URL: ${BACKEND_URL}
       VITE_AGENT_PROCESSOR_URL: ${BACKEND_URL}
       VITE_WS_URL: ${WS_URL}
+    command:
+      - sh
+      - -c
+      - |
+        find /usr/share/nginx/html -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) -exec sed -i \
+          -e "s|VITE_API_URL_PLACEHOLDER|$${VITE_API_URL}|g" \
+          -e "s|VITE_AUTH_API_URL_PLACEHOLDER|$${VITE_AUTH_API_URL}|g" \
+          -e "s|VITE_EVOAI_API_URL_PLACEHOLDER|$${VITE_EVOAI_API_URL}|g" \
+          -e "s|VITE_AGENT_PROCESSOR_URL_PLACEHOLDER|$${VITE_AGENT_PROCESSOR_URL}|g" \
+          -e "s|VITE_WS_URL_PLACEHOLDER|$${VITE_WS_URL}|g" \
+          {} +
+        nginx -g 'daemon off;'
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:
