@@ -173,7 +173,19 @@ services:
 
         asyncio.run(wait_core_table())
         PY
-        alembic upgrade head 2>&1 || echo "Alembic migration had errors, continuing..."
+        MIGRATION_LOG="$$(mktemp)"
+        if alembic upgrade head >"$$MIGRATION_LOG" 2>&1; then
+          cat "$$MIGRATION_LOG"
+        else
+          cat "$$MIGRATION_LOG"
+          if grep -q 'evo_agent_processor_execution_metrics' "$$MIGRATION_LOG" && grep -Eq 'DuplicateTableError|already exists' "$$MIGRATION_LOG"; then
+            echo "Tabela de metricas do processor ja existe; marcando revision 26a14ac7025d no Alembic..."
+            alembic stamp 26a14ac7025d
+            alembic upgrade head
+          else
+            exit 1
+          fi
+        fi
         python -m scripts.run_seeders
 
   evo-gateway:
