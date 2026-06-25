@@ -138,6 +138,8 @@ services:
       EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
       EVO_AI_CRM_URL: http://evo-crm:3000
       CORE_SERVICE_URL: http://evo-core:5555/api/v1
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AUTH_BASE_URL: http://evo-auth:3001
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-a2a:}
       REDIS_TTL: ${REDIS_TTL:-3600}
@@ -158,6 +160,8 @@ services:
         condition: service_healthy
       evo-core:
         condition: service_started
+      evo-auth:
+        condition: service_healthy
     command:
       - sh
       - -c
@@ -404,6 +408,8 @@ services:
       EVOAI_CRM_API_TOKEN: ${EVOAI_CRM_API_TOKEN}
       EVO_AI_CRM_URL: http://evo-crm:3000
       CORE_SERVICE_URL: http://evo-core:5555/api/v1
+      EVO_AUTH_SERVICE_URL: http://evo-auth:3001
+      EVO_AUTH_BASE_URL: http://evo-auth:3001
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-a2a:}
       REDIS_TTL: ${REDIS_TTL:-3600}
@@ -426,6 +432,8 @@ services:
         condition: service_healthy
       evo_processor_init:
         condition: service_completed_successfully
+      evo-auth:
+        condition: service_healthy
     networks:
       default:
         aliases:

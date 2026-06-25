@@ -213,6 +213,36 @@ curl -i -X OPTIONS 'https://api-crm.ninelabs.com.br/api/v1/agents?page=1&pageSiz
 A resposta deve ter status 2xx/3xx e incluir
 `Access-Control-Allow-Origin: https://app-crm.ninelabs.com.br`.
 
+### `Testar agente` retorna `EvoAuth: Network error`
+
+Esse erro vem do `evo-processor` ao tentar validar autenticacao no servico
+`evo-auth`. Ele normalmente indica que o auth nao esta saudavel, nao esta na
+mesma rede Docker, ou o processor subiu sem a URL interna correta do auth.
+
+Recrie os servicos envolvidos para aplicar as URLs internas e a ordem de
+subida:
+
+```bash
+docker compose up -d --force-recreate evo-auth evo-processor evo-bot-runtime evo-gateway
+```
+
+Depois valide a comunicacao interna a partir do processor:
+
+```bash
+docker compose exec evo-processor sh -lc 'python - <<PY
+import socket
+socket.create_connection(("evo-auth", 3001), timeout=5).close()
+print("evo-auth:3001 reachable")
+PY'
+```
+
+Se esse teste falhar, confira primeiro o estado e os logs do auth:
+
+```bash
+docker compose ps evo-auth evo-processor
+docker compose logs --tail=200 evo-auth evo-processor
+```
+
 ### Cloudflare beacon bloqueado pela CSP
 
 Se aparecer erro para `https://static.cloudflareinsights.com/beacon.min.js`, ha
