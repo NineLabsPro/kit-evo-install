@@ -354,6 +354,7 @@ services:
       EVOLUTION_BASE_URL: http://evo-crm:3000
       EVO_AUTH_BASE_URL: http://evo-auth:3001
       AI_PROCESSOR_URL: http://evo-processor:8000
+      AI_PROCESSOR_VERSION: ${AI_PROCESSOR_VERSION:-v1}
     depends_on:
       postgres_init:
         condition: service_completed_successfully
