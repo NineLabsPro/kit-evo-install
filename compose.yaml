@@ -481,6 +481,12 @@ services:
           -e "s|VITE_AGENT_PROCESSOR_URL_PLACEHOLDER|$${VITE_AGENT_PROCESSOR_URL}|g" \
           -e "s|VITE_WS_URL_PLACEHOLDER|$${VITE_WS_URL}|g" \
           {} +
+        for csp_conf in /etc/nginx/conf.d/*.conf /etc/nginx/nginx.conf; do
+          [ -f "$$csp_conf" ] || continue
+          if grep -q 'www.googletagmanager.com' "$$csp_conf" && ! grep -q 'static.cloudflareinsights.com' "$$csp_conf"; then
+            sed -i "s|https://www.googletagmanager.com|https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com|g" "$$csp_conf"
+          fi
+        done
         nginx -g 'daemon off;'
     ports:
       - "${FRONTEND_PORT:-5173}:80"

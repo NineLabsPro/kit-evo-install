@@ -259,15 +259,33 @@ docker compose up -d --force-recreate evo_crm_init evo-crm evo-crm-sidekiq evo-b
 
 ### Cloudflare beacon bloqueado pela CSP
 
-Se aparecer erro para `https://static.cloudflareinsights.com/beacon.min.js`, ha
-duas opcoes:
-
-- desativar Cloudflare Web Analytics para esse dominio;
-- ou incluir `https://static.cloudflareinsights.com` na diretiva `script-src`
-  da CSP configurada no frontend/proxy.
+O erro para `https://static.cloudflareinsights.com/beacon.min.js` acontece
+porque a CSP que vem embutida na imagem do `evo-frontend` (definida no nginx em
+`/etc/nginx/conf.d/default.conf`) nao libera o dominio do Cloudflare Web
+Analytics na diretiva `script-src`.
 
 Esse erro do beacon nao impede o carregamento dos agentes. Ele so indica que a
-CSP atual bloqueou o script de analytics da Cloudflare.
+CSP bloqueou o script de analytics da Cloudflare.
+
+Esse template ja corrige isso de forma nativa. O comando do servico
+`evo-frontend` ajusta a CSP do nginx antes de subir, adicionando os dominios do
+Cloudflare e do Google Analytics ao `script-src`:
+
+```text
+https://www.google-analytics.com
+https://static.cloudflareinsights.com
+```
+
+O ajuste e idempotente: so e aplicado quando os dominios ainda nao estao
+presentes na CSP. Para aplicar a correcao em uma instalacao existente, recrie o
+frontend:
+
+```bash
+docker compose up -d --force-recreate evo-frontend
+```
+
+Se preferir nao expor analytics, a alternativa continua sendo desativar o
+Cloudflare Web Analytics para esse dominio.
 
 ### `GET /api/v1/admin/app_configs/...` ou `/api/v1/dashboard_apps` retorna 500
 
