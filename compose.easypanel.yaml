@@ -104,6 +104,7 @@ services:
       EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
       BOT_RUNTIME_URL: http://evo-bot-runtime:8080
       BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
     depends_on:
       postgres_init:
         condition: service_completed_successfully
@@ -311,6 +312,7 @@ services:
       EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
       BOT_RUNTIME_URL: http://evo-bot-runtime:8080
       BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
     depends_on:
       postgres_init:
         condition: service_completed_successfully
@@ -353,6 +355,7 @@ services:
       EVO_AI_CORE_SERVICE_URL: http://evo-core:5555
       BOT_RUNTIME_URL: http://evo-bot-runtime:8080
       BOT_RUNTIME_POSTBACK_BASE_URL: http://evo-crm:3000
+      BOT_RUNTIME_SECRET: ${BOT_RUNTIME_SECRET}
     depends_on:
       postgres_init:
         condition: service_completed_successfully

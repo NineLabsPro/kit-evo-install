@@ -243,6 +243,20 @@ docker compose ps evo-auth evo-processor
 docker compose logs --tail=200 evo-auth evo-processor
 ```
 
+### Agente nao responde e `evo-bot-runtime` mostra `pipeline.auth.unauthorized`
+
+Esse log indica que o `evo-bot-runtime` recebeu uma chamada em `/events`, mas
+rejeitou a autenticacao interna. Confira se `BOT_RUNTIME_SECRET` esta definido
+no ambiente de deploy e se o mesmo valor esta sendo passado para `evo-crm`,
+`evo-crm-sidekiq`, `evo_crm_init` e `evo-bot-runtime`.
+
+Depois de alterar a variavel ou atualizar o compose, recrie os servicos que
+participam do fluxo do agente:
+
+```bash
+docker compose up -d --force-recreate evo_crm_init evo-crm evo-crm-sidekiq evo-bot-runtime
+```
+
 ### Cloudflare beacon bloqueado pela CSP
 
 Se aparecer erro para `https://static.cloudflareinsights.com/beacon.min.js`, ha
