@@ -94,11 +94,21 @@ BOT_RUNTIME_SECRET
 EVOGO_GLOBAL_API_KEY
 ```
 
-Para gerar segredos:
+Para gerar a maioria dos segredos:
 
 ```bash
 openssl rand -base64 48
 ```
+
+A `ENCRYPTION_KEY` e uma excecao. O EvoCRM usa Fernet, que exige uma chave que
+decodifique para exatamente 32 bytes em base64. Gere essa chave especifica com:
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_'
+```
+
+Nao use `openssl rand -base64 48` para a `ENCRYPTION_KEY`, porque o tamanho fica
+errado e o backend retorna erro 500 ao salvar configuracoes criptografadas.
 
 ## Dokploy
 
@@ -286,6 +296,38 @@ docker compose up -d --force-recreate evo-frontend
 
 Se preferir nao expor analytics, a alternativa continua sendo desativar o
 Cloudflare Web Analytics para esse dominio.
+
+### Salvar config (ex.: API key da OpenAI) retorna 500 com `Fernet::Secret::InvalidSecret`
+
+Se ao salvar uma configuracao em `POST /api/v1/admin/app_configs/...` o backend
+retornar 500 e o log do `evo-crm` mostrar:
+
+```text
+Fernet::Secret::InvalidSecret - Secret must be 32 bytes, instead got 33
+app/models/installation_config.rb:...:in 'encrypt_sensitive_value'
+```
+
+a `ENCRYPTION_KEY` esta com tamanho invalido. O Fernet exige uma chave que
+decodifique para exatamente 32 bytes em base64. Quem gerou a chave com
+`openssl rand -base64 48` (ou similar) cai nesse erro.
+
+Gere uma chave valida:
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_'
+```
+
+Atualize `ENCRYPTION_KEY` no ambiente de deploy e recrie os servicos que leem
+essa variavel:
+
+```bash
+docker compose up -d --force-recreate \
+  evo-auth evo-crm evo-crm-sidekiq evo-core evo-processor evo-bot-runtime
+```
+
+Troque a chave antes de cadastrar dados sensiveis. Se ja existirem valores
+criptografados com outra `ENCRYPTION_KEY`, eles deixarao de ser descriptografados
+apos a troca.
 
 ### `GET /api/v1/admin/app_configs/...` ou `/api/v1/dashboard_apps` retorna 500
 
